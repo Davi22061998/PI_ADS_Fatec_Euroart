@@ -58,4 +58,4 @@ Usuario.init(
   }
 );
 
-export default Usuario;
+export default Usuario; 

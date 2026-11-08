@@ -1,0 +1,13 @@
+:root {
+    --cor-principal: #2e7d32;
+    --cor-tabela-header: #eceff1;
+    --cor-borda-padrao: #cfd8dc;
+    --radius-caixas: 12px;
+    --radius-input: 6px;
+    --radius-botoes: 6px;
+}
+
+* {
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}

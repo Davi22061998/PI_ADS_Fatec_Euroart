@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel de Conferência - Euroart</title>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { margin: 0; padding: 20px; background-color: #f4f6f8; }
+        .header { display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 15px 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        .user-info { display: flex; align-items: center; gap: 15px; }
+        .badge { background: #2196f3; color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; text-transform: uppercase; font-weight: bold; }
+        .btn-logout { background: #e53935; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .btn-logout:hover { background: #c62828; }
+        .card { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>📦 Euroart — Sistema de Expedição e Conferência Final</h2>
+        <div class="user-info">
+            <span id="user-display">Carregando...</span>
+            <span id="role-display" class="badge"></span>
+            <button class="btn-logout" onclick="logout()">Sair</button>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>✅ Autenticação realizada com sucesso!</h3>
+        <p>Você está logado no sistema de conferência.</p>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('token');
+        const usuarioJson = localStorage.getItem('usuario');
+
+        if (!token || !usuarioJson) {
+            window.location.href = 'login.html';
+        } else {
+            const usuario = JSON.parse(usuarioJson);
+            document.getElementById('user-display').textContent = `Olá, ${usuario.nome} (${usuario.email})`;
+            document.getElementById('role-display').textContent = usuario.perfil;
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('usuario');
+            window.location.href = 'login.html';
+        }
+    </script>
+</body>
+</html>

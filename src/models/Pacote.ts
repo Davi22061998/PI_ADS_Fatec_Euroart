@@ -1,5 +1,7 @@
 import { DataTypes, Model, Optional } from 'sequelize';
 import sequelize from '../config/database';
+import type Embalagem from './Embalagem';
+import type ItemPacote from './ItemPacote';
 
 export type StatusPacote = 'pendente' | 'ok' | 'divergente_peso' | 'bloqueado' | 'liberado_divergente';
 
@@ -57,6 +59,9 @@ export class Pacote extends Model<PacoteAttributes, PacoteCreationAttributes> im
   public declare usuario_liberacao_id: number | null;
   public declare caixa_id: number | null;
   public declare data_conferido: Date | null;
+
+  public declare embalagem?: Embalagem | null;
+  public declare itens?: ItemPacote[];
 }
 
 Pacote.init(

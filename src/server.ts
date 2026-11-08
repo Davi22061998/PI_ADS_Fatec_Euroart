@@ -3,8 +3,10 @@ import cors from 'cors';
 import path from 'path';
 import dotenv from 'dotenv';
 import sequelize from './config/database';
+import './models';
 import authRoutes from './routes/auth.routes';
 import usuarioRoutes from './routes/usuario.routes';
+import conferenciaRoutes from './routes/conferencia.routes';
 
 dotenv.config();
 
@@ -23,6 +25,7 @@ app.use(express.static(publicPath));
 // Rotas da API
 app.use('/api/auth', authRoutes);
 app.use('/api/usuarios', usuarioRoutes);
+app.use('/api/conferencias', conferenciaRoutes);
 
 // Rota de verificação de integridade da API
 app.get('/api/health', (_req: Request, res: Response) => {

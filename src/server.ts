@@ -8,6 +8,7 @@ import authRoutes from './routes/auth.routes';
 import usuarioRoutes from './routes/usuario.routes';
 import conferenciaRoutes from './routes/conferencia.routes';
 import remessaRoutes from './routes/remessa.routes';
+import minutaRoutes from './routes/minuta.routes';
 
 dotenv.config();
 
@@ -28,6 +29,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/conferencias', conferenciaRoutes);
 app.use('/api/remessas', remessaRoutes);
+app.use('/api/minutas', minutaRoutes);
 
 // Rota de verificação de integridade da API
 app.get('/api/health', (_req: Request, res: Response) => {

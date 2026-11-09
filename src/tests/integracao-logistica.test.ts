@@ -117,11 +117,14 @@ async function executarSuiteTestesQA() {
 
     const remessa = await Remessa.create({
       conferencia_id: conferencia.id,
-      mkp: 'Mercado Livre Full'
+      numero_remessa: 1,
+      arquivo_nome: 'remessa_qa.json',
+      total_pacotes: 2
     });
 
     // Pacote SP (Não exige GNRE)
     const pacoteSP = await Pacote.create({
+      conferencia_id: conferencia.id,
       chave_acesso: '35261188888888888888888888888888888888880001',
       remessa_id: remessa.id,
       numero_nf: '7001',
@@ -138,6 +141,7 @@ async function executarSuiteTestesQA() {
     const exigeGuiaCe = regraCe ? regraCe.exige_guia : false;
 
     const pacoteCE = await Pacote.create({
+      conferencia_id: conferencia.id,
       chave_acesso: '35261188888888888888888888888888888888880002',
       remessa_id: remessa.id,
       numero_nf: '7002',

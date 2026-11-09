@@ -1,58 +1,60 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 
-export interface UsuarioTokenPayload {
-  id: number;
-  nome: string;
-  email: string;
-  perfil: 'admin' | 'conferente';
-}
-
+// 1. Injetamos a propriedade 'usuario' diretamente na tipagem global do Express.
+// Assim, o TypeScript nunca mais vai reclamar do "req.usuario" em nenhum ficheiro!
 declare global {
   namespace Express {
     interface Request {
-      usuario?: UsuarioTokenPayload;
+      usuario?: {
+        id: number;
+        nome: string;
+        perfil: 'admin' | 'conferente';
+      };
     }
   }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'euroart_secret_key_default';
-
-export function verificarToken(req: Request, res: Response, next: NextFunction): void {
+// 2. O Segurança Principal: Verifica se o Token existe e é válido
+export const verificarToken = (req: Request, res: Response, next: NextFunction): void => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader) {
-    res.status(401).json({ erro: 'Token de autenticação não fornecido.' });
+    res.status(401).json({ erro: 'Acesso negado. Token não fornecido.' });
     return;
   }
 
-  const partes = authHeader.split(' ');
-  if (partes.length !== 2 || partes[0] !== 'Bearer') {
-    res.status(401).json({ erro: 'Formato de token inválido. Use Bearer <token>.' });
+  const token = authHeader.split(' ')[1];
+
+  if (!token) {
+    res.status(401).json({ erro: 'Acesso negado. Token mal formatado.' });
     return;
   }
-
-  const token = partes[1];
 
   try {
-    const payload = jwt.verify(token as string, JWT_SECRET) as UsuarioTokenPayload;
-    req.usuario = payload;
-    next();
+    const secret = process.env.JWT_SECRET || 'chave_secreta_padrao';
+    // Fazemos o cast (as any) para garantir que o JWT devolve o objeto esperado
+    const payload = jwt.verify(token, secret) as any;
+    
+    // Agora o TypeScript aceita perfeitamente!
+    req.usuario = {
+      id: payload.id,
+      nome: payload.nome,
+      perfil: payload.perfil
+    };
+    
+    next(); 
   } catch (error) {
-    res.status(401).json({ erro: 'Token inválido ou expirado.' });
+    res.status(403).json({ erro: 'Token inválido ou expirado. Faça login novamente.' });
   }
-}
+};
 
-export function apenasAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!req.usuario) {
-    res.status(401).json({ erro: 'Usuário não autenticado.' });
+// 3. O Segurança VIP: Verifica se quem está tentando acessar é Administrador
+export const apenasAdmin = (req: Request, res: Response, next: NextFunction): void => {
+  if (!req.usuario || req.usuario.perfil !== 'admin') {
+    res.status(403).json({ erro: 'Acesso restrito. Requer privilégios de Administrador.' });
     return;
   }
-
-  if (req.usuario.perfil !== 'admin') {
-    res.status(403).json({ erro: 'Acesso negado. Apenas administradores podem acessar este recurso.' });
-    return;
-  }
-
-  next();
-}
+  
+  next(); 
+};

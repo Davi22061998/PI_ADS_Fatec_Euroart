@@ -4,22 +4,29 @@ import { verificarToken, apenasAdmin } from '../middlewares/auth';
 
 const router = Router();
 
-// Todas as rotas de conferência exigem autenticação via JWT
+// Todas as rotas de conferência exigem utilizador autenticado
 router.use(verificarToken);
 
-// Listar conferências ativas (em andamento)
-router.get('/ativas', ConferenciaController.listarAtivas);
+router.post('/importar', ConferenciaController.importarRemessa);
+router.post('/conferir', ConferenciaController.conferirPacote);
+router.post('/liberar-divergente', ConferenciaController.liberarDivergente);
 
-// Iniciar nova conferência para uma transportadora
-router.post('/iniciar', ConferenciaController.iniciar);
+router.get('/ativas', ConferenciaController.listarConferenciasAbertas);
 
-// Rota principal de bipagem IoT (Chave de Acesso + Balança)
-router.post('/bipar', ConferenciaController.bipar);
+// Rotas específicas devem vir antes do parâmetro /:id
+router.get('/finalizadas', ConferenciaController.listarConferenciasFinalizadas);
+router.get('/dashboard', ConferenciaController.obterDashboard);
+router.get('/historico-geral', ConferenciaController.listarHistoricoGeral);
 
-// Liberação de pacote com divergência/bloqueio (Apenas Admin)
-router.post('/pacotes/:id/liberar', apenasAdmin, ConferenciaController.liberarPacote);
-
-// Finalizar conferência
+router.get('/:id', ConferenciaController.obterConferencia);
+router.get('/:id/minuta', ConferenciaController.gerarMinuta);
+router.post('/:id/interromper', ConferenciaController.interromper);
+router.post('/:id/retomar', ConferenciaController.retomar);
 router.post('/:id/finalizar', ConferenciaController.finalizar);
+
+// Ações exclusivas para Administradores
+router.post('/:id/remover-ultima-remessa', apenasAdmin, ConferenciaController.removerUltimaRemessa);
+router.delete('/pacotes', apenasAdmin, ConferenciaController.excluirPacotes);
+router.delete('/:id', apenasAdmin, ConferenciaController.excluirConferencia);
 
 export default router;

@@ -1,373 +1,539 @@
 import { Request, Response } from 'express';
-import {
-  Conferencia,
-  Pacote,
-  Remessa,
-  ItemPacote,
-  Produto,
-  Embalagem,
-  RegraIcms,
-  LogAuditoria,
-  Usuario
-} from '../models';
+import { Op } from 'sequelize';
+import bcrypt from 'bcrypt';
+import PDFDocument from 'pdfkit';
+import sequelize from '../config/database';
+import Conferencia from '../models/Conferencia';
+import Remessa from '../models/Remessa';
+import Pacote from '../models/Pacote';
+import ItemPacote from '../models/ItemPacote';
+import CaixaEmbalagem from '../models/CaixaEmbalagem';
+import SkuProduto from '../models/SkuProduto';
+import RegraIcms from '../models/RegraIcms';
+import Usuario from '../models/Usuario';
 
 export class ConferenciaController {
-  // 1. Iniciar uma nova conferência
-  static async iniciar(req: Request, res: Response): Promise<void> {
+  static async importarRemessa(req: Request, res: Response): Promise<void> {
+    const t = await sequelize.transaction();
     try {
-      const { transportadora } = req.body;
-      const usuarioId = req.usuario?.id;
+      const { arquivo_nome, pacotes, conferencia_ativa_id } = req.body;
+      const usuarioLogado = (req as any).usuario || (req as any).user;
 
-      if (!transportadora) {
-        res.status(400).json({ erro: 'O nome da transportadora é obrigatório.' });
+      if (!usuarioLogado) {
+        await t.rollback();
+        res.status(401).json({ erro: 'Utilizador não autenticado.' });
         return;
       }
 
-      if (!usuarioId) {
-        res.status(401).json({ erro: 'Usuário não autenticado.' });
+      if (!arquivo_nome || !Array.isArray(pacotes) || pacotes.length === 0) {
+        await t.rollback();
+        res.status(400).json({ erro: 'Ficheiro JSON inválido ou lista de pacotes vazia.' });
         return;
       }
 
-      // Verifica se já existe uma conferência em andamento para esta transportadora
-      const conferenciaAtiva = await Conferencia.findOne({
-        where: {
-          transportadora,
-          status: 'em_andamento'
-        }
-      });
-
-      if (conferenciaAtiva) {
-        res.status(200).json({
-          mensagem: 'Conferência já em andamento recuperada.',
-          conferencia: conferenciaAtiva
+      const transportadorasArquivo = [...new Set(pacotes.map((p: any) => p.transportadora).filter(Boolean))];
+      if (transportadorasArquivo.length === 0) {
+        await t.rollback();
+        res.status(400).json({ erro: 'Nenhuma transportadora identificada no ficheiro JSON importado.' });
+        return;
+      }
+      if (transportadorasArquivo.length > 1) {
+        await t.rollback();
+        res.status(400).json({
+          erro: `Ficheiro inválido: contém múltiplas transportadoras (${transportadorasArquivo.join(', ')}). Cada remessa deve conter apenas uma transportadora.`
         });
         return;
       }
 
-      const novaConferencia = await Conferencia.create({
-        transportadora,
-        usuario_id: usuarioId,
-        status: 'em_andamento',
-        data_inicio: new Date()
+      const transportadoraArquivo = transportadorasArquivo[0] as string;
+
+      if (conferencia_ativa_id) {
+        const confAtual = await Conferencia.findByPk(Number(conferencia_ativa_id), { transaction: t });
+        if (confAtual && confAtual.status === 'em_andamento' && confAtual.transportadora !== transportadoraArquivo) {
+          await t.rollback();
+          res.status(400).json({
+            erro: `A conferência ativa pertence à "${confAtual.transportadora}". O ficheiro importado pertence à "${transportadoraArquivo}". Interrompa ou finalize a conferência atual antes de importar pacotes de outra transportadora.`
+          });
+          return;
+        }
+      }
+
+      let conferencia = await Conferencia.findOne({
+        where: {
+          transportadora: transportadoraArquivo,
+          status: { [Op.in]: ['em_andamento', 'interrompida'] }
+        },
+        transaction: t
       });
 
-      await LogAuditoria.create({
-        usuario_id: usuarioId ?? null,
-        acao: 'INICIO_CONFERENCIA',
-        detalhes: `Iniciada conferência ID ${novaConferencia.id} para transportadora ${transportadora}.`
+      if (!conferencia) {
+        conferencia = await Conferencia.create({
+          transportadora: transportadoraArquivo,
+          status: 'em_andamento',
+          usuario_id: usuarioLogado.id,
+          data_inicio: new Date()
+        }, { transaction: t });
+      } else if (conferencia.status === 'interrompida') {
+        conferencia.status = 'em_andamento';
+        await conferencia.save({ transaction: t });
+      }
+
+      const remessaExistente = await Remessa.findOne({
+        where: {
+          conferencia_id: conferencia.id,
+          arquivo_nome
+        },
+        transaction: t
       });
+
+      if (remessaExistente) {
+        await t.rollback();
+        res.status(409).json({
+          erro: `O ficheiro "${arquivo_nome}" já foi importado anteriormente na Remessa nº ${remessaExistente.numero_remessa} desta conferência.`
+        });
+        return;
+      }
+
+      const numerosNfJson = pacotes.map((p: any) => String(p.numero_nf));
+      const chavesAcessoJson = pacotes.map((p: any) => String(p.chave_acesso));
+
+      const pacotesExistentesNoBanco = await Pacote.findAll({
+        where: {
+          [Op.or]: [
+            { numero_nf: { [Op.in]: numerosNfJson } },
+            { chave_acesso: { [Op.in]: chavesAcessoJson } }
+          ]
+        },
+        transaction: t
+      });
+
+      const nfsExistentesSet = new Set(pacotesExistentesNoBanco.map(p => p.numero_nf));
+      const chavesExistentesSet = new Set(pacotesExistentesNoBanco.map(p => p.chave_acesso));
+
+      const todasRepetidas = pacotes.every((p: any) =>
+        chavesExistentesSet.has(String(p.chave_acesso)) || nfsExistentesSet.has(String(p.numero_nf))
+      );
+
+      if (todasRepetidas) {
+        await t.rollback();
+        res.status(400).json({
+          erro: 'Todas as notas fiscais deste ficheiro já foram importadas e conferidas no sistema.'
+        });
+        return;
+      }
+
+      const totalRemessas = await Remessa.count({
+        where: { conferencia_id: conferencia.id },
+        transaction: t
+      });
+      const proximoNumeroRemessa = totalRemessas + 1;
+
+      const novaRemessa = await Remessa.create({
+        conferencia_id: conferencia.id,
+        numero_remessa: proximoNumeroRemessa,
+        arquivo_nome,
+        total_pacotes: pacotes.length,
+        data_importacao: new Date()
+      }, { transaction: t });
+
+      const regrasIcms = await RegraIcms.findAll({ transaction: t });
+      const ufsComGuia = new Set(regrasIcms.filter(r => r.exige_guia).map(r => r.uf.toUpperCase()));
+
+      let adicionados = 0;
+      let duplicadosIgnorados = 0;
+
+      for (const p of pacotes) {
+        const nfStr = String(p.numero_nf);
+        const chaveStr = String(p.chave_acesso);
+
+        if (nfsExistentesSet.has(nfStr) || chavesExistentesSet.has(chaveStr)) {
+          duplicadosIgnorados++;
+          continue;
+        }
+
+        const pacoteCriado = await Pacote.create({
+          conferencia_id: conferencia.id,
+          remessa_id: novaRemessa.id,
+          chave_acesso: chaveStr,
+          numero_nf: nfStr,
+          razao_social: p.razao_social || 'Consumidor Final',
+          descricao_produto: p.itens?.[0]?.descricao_produto || '',
+          uf: (p.uf || 'SP').toUpperCase(),
+          status: 'pendente',
+          possui_guia_icms: ufsComGuia.has((p.uf || '').toUpperCase()),
+          tentativas_peso: 0
+        }, { transaction: t });
+
+        nfsExistentesSet.add(nfStr);
+        chavesExistentesSet.add(chaveStr);
+        adicionados++;
+
+        if (Array.isArray(p.itens) && p.itens.length > 0) {
+          const itensParaCriar = p.itens.map((item: any) => ({
+            pacote_id: pacoteCriado.id,
+            codigo_sku: String(item.codigo_sku),
+            descricao_produto: item.descricao_produto || '',
+            quantidade: Number(item.quantidade) || 1
+          }));
+          await ItemPacote.bulkCreate(itensParaCriar, { transaction: t });
+        }
+      }
+
+      await t.commit();
+
+      let mensagemSucesso = `Remessa #${proximoNumeroRemessa} importada com sucesso (${adicionados} novos pacotes adicionados).`;
+      if (duplicadosIgnorados > 0) {
+        mensagemSucesso += ` ${duplicadosIgnorados} pacote(s) repetido(s) ignorado(s).`;
+      }
 
       res.status(201).json({
-        mensagem: 'Conferência iniciada com sucesso!',
-        conferencia: novaConferencia
+        mensagem: mensagemSucesso,
+        conferencia_id: conferencia.id,
+        remessa_id: novaRemessa.id,
+        transportadora: transportadoraArquivo,
+        pacotes_adicionados: adicionados,
+        pacotes_duplicados: duplicadosIgnorados
       });
     } catch (error: any) {
-      res.status(500).json({ erro: error.message || 'Erro ao iniciar conferência.' });
+      await t.rollback();
+      res.status(500).json({ erro: error.message });
     }
   }
 
-  // 2. Buscar conferências ativas (em andamento ou interrompida) com pacotes
-  static async listarAtivas(_req: Request, res: Response): Promise<void> {
+  static async conferirPacote(req: Request, res: Response): Promise<void> {
     try {
-      const conferencias = await Conferencia.findAll({
-        where: {
-          status: ['em_andamento', 'interrompida']
-        },
-        include: [
-          {
-            model: Usuario,
-            as: 'usuario',
-            attributes: ['id', 'nome', 'email', 'perfil']
-          },
-          {
-            model: Remessa,
-            as: 'remessas',
-            include: [
-              {
-                model: Pacote,
-                as: 'pacotes',
-                include: [
-                  {
-                    model: ItemPacote,
-                    as: 'itens',
-                    include: [{ model: Produto, as: 'produto' }]
-                  },
-                  {
-                    model: Embalagem,
-                    as: 'embalagem'
-                  }
-                ]
-              }
-            ]
-          }
-        ],
-        order: [['id', 'DESC']]
+      const { conferencia_id, codigo_caixa, codigo_pacote, peso_balanca } = req.body;
+
+      if (!conferencia_id || !codigo_caixa || !codigo_pacote) {
+        res.status(400).json({ erro: 'ID da conferência, código da caixa e código do pacote são obrigatórios.' });
+        return;
+      }
+
+      if (peso_balanca === undefined || peso_balanca === null) {
+        res.status(400).json({ erro: 'Peso da balança é obrigatório.' });
+        return;
+      }
+
+      const caixa = await CaixaEmbalagem.findOne({
+        where: { codigo_sku: String(codigo_caixa).trim().toUpperCase() }
       });
-
-      res.status(200).json(conferencias);
-    } catch (error: any) {
-      res.status(500).json({ erro: error.message || 'Erro ao listar conferências ativas.' });
-    }
-  }
-
-  // 3. Principal Rota de Bipagem e Validação de Peso (IoT Balança + Leitor Chave)
-  static async bipar(req: Request, res: Response): Promise<void> {
-    try {
-      const { chave_acesso, codigo_caixa, peso_lido } = req.body;
-      const usuarioId = req.usuario?.id;
-
-      if (!chave_acesso || peso_lido === undefined || peso_lido === null) {
-        res.status(400).json({ erro: 'Chave de acesso e peso lido são obrigatórios.' });
+      if (!caixa) {
+        res.status(404).json({ erro: `Caixa com SKU/código "${codigo_caixa}" não cadastrada no sistema.` });
         return;
       }
 
-      const pesoLidoNum = Number(peso_lido);
-      if (isNaN(pesoLidoNum) || pesoLidoNum <= 0) {
-        res.status(400).json({ erro: 'O peso lido deve ser um número positivo.' });
-        return;
-      }
-
-      // Busca o pacote pela chave de acesso
       const pacote = await Pacote.findOne({
-        where: { chave_acesso: chave_acesso.trim() },
-        include: [
-          {
-            model: ItemPacote,
-            as: 'itens',
-            include: [{ model: Produto, as: 'produto' }]
-          },
-          {
-            model: Embalagem,
-            as: 'embalagem'
-          }
-        ]
+        where: {
+          conferencia_id: Number(conferencia_id),
+          [Op.or]: [
+            { chave_acesso: String(codigo_pacote).trim() },
+            { numero_nf: String(codigo_pacote).trim() }
+          ]
+        },
+        include: [{ model: ItemPacote, as: 'itens' }]
       });
 
       if (!pacote) {
-        res.status(404).json({ erro: 'Pacote não localizado para esta chave de acesso.' });
+        res.status(404).json({
+          status: 'fora_remessa',
+          erro: 'DIVERGÊNCIA: Pacote não pertence a esta conferência/remessa.'
+        });
         return;
       }
 
-      // Validação de estado atual
       if (pacote.status === 'ok' || pacote.status === 'liberado_divergente') {
-        res.status(200).json({
-          mensagem: 'Pacote já conferido anteriormente com sucesso.',
-          status: pacote.status,
-          pacote
+        res.status(409).json({
+          status: 'duplicado',
+          mensagem: 'Pacote já conferido anteriormente.',
+          pacote: {
+            numero_nf: pacote.numero_nf,
+            chave_acesso: pacote.chave_acesso,
+            data_conferido: pacote.data_conferido,
+            cliente: pacote.razao_social
+          }
         });
         return;
       }
 
       if (pacote.status === 'bloqueado') {
         res.status(403).json({
-          erro: 'Pacote bloqueado por reincidência de divergência. Solicite a liberação de um supervisor.',
           status: 'bloqueado',
-          tentativas: pacote.tentativas_peso
+          erro: 'Pacote travado por divergência de peso na 2ª tentativa. Requer autorização de um superior.'
         });
         return;
       }
 
-      // Obter tara da caixa (se fornecido código de embalagem, busca ou usa do pacote)
-      let taraCaixa = 0;
-      let embalagemId = pacote.caixa_id;
-
-      if (codigo_caixa) {
-        const embalagemEncontrada = await Embalagem.findOne({
-          where: { tipo: codigo_caixa }
-        });
-        if (embalagemEncontrada) {
-          taraCaixa = Number(embalagemEncontrada.peso_estimado_g);
-          embalagemId = embalagemEncontrada.id;
-        }
-      } else if (pacote.embalagem) {
-        taraCaixa = Number(pacote.embalagem.peso_estimado_g);
+      const itens = (pacote as any).itens || [];
+      if (itens.length === 0) {
+        res.status(400).json({ erro: 'Pacote sem itens vinculados na remessa.' });
+        return;
       }
 
-      // Cálculo do Peso Esperado = Tara + Σ (Peso Unitário do SKU * Quantidade)
-      let pesoProdutos = 0;
-      const itens = (pacote as any).itens || [];
+      let pesoProdutosEsperado = 0;
+      let maiorTolerancia = 2.0;
 
       for (const item of itens) {
-        const pesoUnitario = item.produto ? Number(item.produto.peso_unitario_g) : 0;
-        const qtd = Number(item.quantidade) || 1;
-        pesoProdutos += pesoUnitario * qtd;
+        const skuCadastrado = await SkuProduto.findOne({ where: { codigo_sku: item.codigo_sku } });
+        if (!skuCadastrado) {
+          res.status(400).json({
+            erro: `O produto "${item.codigo_sku}" não possui peso cadastrado. Cadastre o SKU em Parametrização para efetivar a conferência.`
+          });
+          return;
+        }
+
+        pesoProdutosEsperado += Number(skuCadastrado.peso_unitario_gramas) * item.quantidade;
+        if (Number(skuCadastrado.tolerancia_peso_porcento) > maiorTolerancia) {
+          maiorTolerancia = Number(skuCadastrado.tolerancia_peso_porcento);
+        }
       }
 
-      // Se o pacote já tiver um peso esperado cadastrado e não houver itens detalhados, usa ele
-      let pesoEsperado = taraCaixa + pesoProdutos;
-      if (pesoEsperado === 0 && pacote.peso_esperado_g) {
-        pesoEsperado = Number(pacote.peso_esperado_g);
-      }
+      const pesoTaraCaixa = Number(caixa.peso_gramas);
+      const pesoEsperadoTotal = Number((pesoProdutosEsperado + pesoTaraCaixa).toFixed(2));
+      const pesoLido = Number(peso_balanca);
 
-      // Tolerância percentual padrão de 2% (conforme especificação da Euroart)
-      const toleranciaPercentual = 0.02;
-      const limiteMinimo = pesoEsperado * (1 - toleranciaPercentual);
-      const limiteMaximo = pesoEsperado * (1 + toleranciaPercentual);
+      const margemAceitavel = pesoEsperadoTotal * (maiorTolerancia / 100);
+      const pesoMinimo = pesoEsperadoTotal - margemAceitavel;
+      const pesoMaximo = pesoEsperadoTotal + margemAceitavel;
+      const pesoAprovado = pesoLido >= pesoMinimo && pesoLido <= pesoMaximo;
 
-      // Verificação de ICMS / GNRE
-      let alertaIcms = false;
-      if (pacote.uf) {
-        const regra = await RegraIcms.findByPk(pacote.uf.toUpperCase());
-        alertaIcms = regra ? regra.exige_guia : false;
-      }
+      pacote.caixa_id = caixa.id;
+      pacote.peso_esperado_g = pesoEsperadoTotal;
+      pacote.peso_lido_g = pesoLido;
 
-      // Validação de Peso
-      const pesoValido = pesoLidoNum >= limiteMinimo && pesoLidoNum <= limiteMaximo;
-
-      if (pesoValido) {
-        // Aprovado
+      if (pesoAprovado) {
         pacote.status = 'ok';
-        pacote.peso_lido_g = pesoLidoNum;
-        pacote.peso_esperado_g = pesoEsperado;
-        pacote.caixa_id = embalagemId;
         pacote.data_conferido = new Date();
         await pacote.save();
 
-        await LogAuditoria.create({
-          usuario_id: usuarioId ?? null,
-          acao: 'CONFERENCIA_OK',
-          detalhes: `Pacote NF ${pacote.numero_nf} conferido com sucesso. Lido: ${pesoLidoNum}g, Esperado: ${pesoEsperado}g.`
-        });
-
         res.status(200).json({
-          sucesso: true,
           status: 'ok',
-          mensagem: 'Pacote conferido e aprovado com sucesso!',
-          dados: {
-            pacote_id: pacote.id,
+          mensagem: 'Pacote conferido com sucesso!',
+          pacote: {
+            id: pacote.id,
             numero_nf: pacote.numero_nf,
             chave_acesso: pacote.chave_acesso,
-            peso_lido: pesoLidoNum,
-            peso_esperado: pesoEsperado,
-            margem_minima: Number(limiteMinimo.toFixed(2)),
-            margem_maxima: Number(limiteMaximo.toFixed(2)),
-            alerta_guia_icms: alertaIcms,
-            uf_destino: pacote.uf
+            peso_esperado: pesoEsperadoTotal,
+            peso_lido: pesoLido,
+            possui_guia_icms: pacote.possui_guia_icms,
+            status: pacote.status
           }
         });
-      } else {
-        // Divergência de Peso
-        pacote.tentativas_peso += 1;
-        pacote.peso_lido_g = pesoLidoNum;
-        pacote.peso_esperado_g = pesoEsperado;
-
-        if (pacote.tentativas_peso >= 2) {
-          // 2ª Falha: Bloqueio de segurança
-          pacote.status = 'bloqueado';
-          await pacote.save();
-
-          await LogAuditoria.create({
-            usuario_id: usuarioId ?? null,
-            acao: 'PACOTE_BLOQUEADO',
-            detalhes: `Pacote NF ${pacote.numero_nf} bloqueado após 2 divergências. Lido: ${pesoLidoNum}g, Esperado: ${pesoEsperado}g.`
-          });
-
-          res.status(403).json({
-            sucesso: false,
-            erro: 'Pacote bloqueado! 2ª divergência de peso consecutiva detectada. Solicite a liberação de um supervisor.',
-            status: 'bloqueado',
-            tentativas: pacote.tentativas_peso,
-            dados: {
-              peso_lido: pesoLidoNum,
-              peso_esperado: pesoEsperado,
-              margem_minima: Number(limiteMinimo.toFixed(2)),
-              margem_maxima: Number(limiteMaximo.toFixed(2))
-            }
-          });
-        } else {
-          // 1ª Falha: Permite repesar
-          pacote.status = 'divergente_peso';
-          await pacote.save();
-
-          await LogAuditoria.create({
-            usuario_id: usuarioId ?? null,
-            acao: 'DIVERGENCIA_PESO',
-            detalhes: `1ª divergência no pacote NF ${pacote.numero_nf}. Lido: ${pesoLidoNum}g, Esperado: ${pesoEsperado}g.`
-          });
-
-          res.status(400).json({
-            sucesso: false,
-            erro: 'Peso divergente fora da tolerância (2%). Retire a caixa e repese.',
-            status: 'divergente_peso',
-            tentativas: 1,
-            dados: {
-              peso_lido: pesoLidoNum,
-              peso_esperado: pesoEsperado,
-              margem_minima: Number(limiteMinimo.toFixed(2)),
-              margem_maxima: Number(limiteMaximo.toFixed(2))
-            }
-          });
-        }
+        return;
       }
+
+      pacote.tentativas_peso += 1;
+      if (pacote.tentativas_peso >= 2) {
+        pacote.status = 'bloqueado';
+        await pacote.save();
+
+        res.status(422).json({
+          status: 'bloqueado',
+          mensagem: 'Peso divergente na 2ª tentativa. Pacote travado. Exige liberação de superior com justificativa.',
+          detalhes: {
+            peso_esperado: pesoEsperadoTotal,
+            peso_lido: pesoLido,
+            faixa_aceita: `${pesoMinimo.toFixed(2)}g a ${pesoMaximo.toFixed(2)}g`,
+            tentativas: pacote.tentativas_peso
+          }
+        });
+        return;
+      }
+
+      pacote.status = 'divergente_peso';
+      await pacote.save();
+
+      res.status(422).json({
+        status: 'divergente_peso',
+        mensagem: 'Peso divergente! Abra fisicamente a caixa para conferir os produtos antes de tentar novamente.',
+        detalhes: {
+          peso_esperado: pesoEsperadoTotal,
+          peso_lido: pesoLido,
+          faixa_aceita: `${pesoMinimo.toFixed(2)}g a ${pesoMaximo.toFixed(2)}g`,
+          tentativas: pacote.tentativas_peso
+        }
+      });
     } catch (error: any) {
-      res.status(500).json({ erro: error.message || 'Erro durante a bipagem do pacote.' });
+      res.status(500).json({ erro: error.message });
     }
   }
 
-  // 4. Liberação de Pacote Bloqueado (Alçada exclusiva de Admin)
-  static async liberarPacote(req: Request, res: Response): Promise<void> {
+  static async liberarDivergente(req: Request, res: Response): Promise<void> {
     try {
-      const pacoteId = Number(req.params.id);
-      const { justificativa } = req.body;
-      const adminId = req.usuario?.id;
+      const { pacote_id, email_superior, senha_superior, justificativa } = req.body;
 
-      if (isNaN(pacoteId)) {
-        res.status(400).json({ erro: 'ID do pacote inválido.' });
+      if (!pacote_id || !email_superior || !senha_superior || !justificativa) {
+        res.status(400).json({ erro: 'ID do pacote, credenciais do superior e justificativa são obrigatórios.' });
         return;
       }
 
-      if (!justificativa || justificativa.trim().length < 5) {
-        res.status(400).json({ erro: 'Justificativa de liberação é obrigatória (mínimo de 5 caracteres).' });
+      const superior = await Usuario.findOne({ where: { email: email_superior } });
+      if (!superior || superior.perfil !== 'admin') {
+        res.status(403).json({ erro: 'Credenciais inválidas ou utilizador não possui privilégios de superior.' });
         return;
       }
 
-      const pacote = await Pacote.findByPk(pacoteId);
+      const senhaValida = await bcrypt.compare(senha_superior, superior.senha_hash);
+      if (!senhaValida) {
+        res.status(403).json({ erro: 'Senha do superior incorreta.' });
+        return;
+      }
+
+      const pacote = await Pacote.findByPk(Number(pacote_id));
       if (!pacote) {
         res.status(404).json({ erro: 'Pacote não encontrado.' });
         return;
       }
 
-      if (pacote.status !== 'bloqueado' && pacote.status !== 'divergente_peso') {
-        res.status(400).json({ erro: 'Apenas pacotes bloqueados ou com divergência requerem liberação manual.' });
-        return;
-      }
-
       pacote.status = 'liberado_divergente';
       pacote.justificativa_liberacao = justificativa;
-      pacote.usuario_liberacao_id = adminId ?? null;
+      pacote.usuario_liberacao_id = superior.id;
       pacote.data_conferido = new Date();
       await pacote.save();
 
-      await LogAuditoria.create({
-        usuario_id: adminId ?? null,
-        acao: 'LIBERACAO_SUPERVISOR',
-        detalhes: `Pacote ID ${pacote.id} (NF: ${pacote.numero_nf}) liberado por admin. Justificativa: "${justificativa}".`
-      });
-
       res.status(200).json({
-        sucesso: true,
-        mensagem: 'Pacote liberado com sucesso pelo supervisor!',
+        mensagem: 'Pacote liberado com ressalva pelo superior!',
         pacote
       });
     } catch (error: any) {
-      res.status(500).json({ erro: error.message || 'Erro ao liberar pacote.' });
+      res.status(500).json({ erro: error.message });
     }
   }
 
-  // 5. Finalizar Conferência
-  static async finalizar(req: Request, res: Response): Promise<void> {
+  static async listarConferenciasAbertas(req: Request, res: Response): Promise<void> {
     try {
-      const conferenciaId = Number(req.params.id);
-      const usuarioId = req.usuario?.id;
+      const conferencias = await Conferencia.findAll({
+        where: { status: { [Op.in]: ['em_andamento', 'interrompida'] } },
+        include: [
+          { model: Remessa, as: 'remessas' },
+          { model: Pacote, as: 'pacotes' }
+        ],
+        order: [['id', 'DESC']]
+      });
+      res.status(200).json(conferencias);
+    } catch (error: any) {
+      res.status(500).json({ erro: error.message });
+    }
+  }
 
-      if (isNaN(conferenciaId)) {
-        res.status(400).json({ erro: 'ID da conferência inválido.' });
+  static async listarConferenciasFinalizadas(req: Request, res: Response): Promise<void> {
+    try {
+      const conferencias = await Conferencia.findAll({
+        where: { status: 'finalizada' },
+        include: [
+          { model: Pacote, as: 'pacotes' },
+          { model: Usuario, as: 'usuario' }
+        ],
+        order: [['data_finalizacao', 'DESC']]
+      });
+      res.status(200).json(conferencias);
+    } catch (error: any) {
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async obterConferencia(req: Request, res: Response): Promise<void> {
+    try {
+      const id = Number(req.params.id);
+      if (!id || isNaN(id)) {
+        res.status(400).json({ erro: 'ID de conferência inválido.' });
         return;
       }
 
-      const conferencia = await Conferencia.findByPk(conferenciaId);
+      const conferencia = await Conferencia.findByPk(id, {
+        include: [
+          { model: Remessa, as: 'remessas' },
+          {
+            model: Pacote,
+            as: 'pacotes',
+            include: [
+              { model: ItemPacote, as: 'itens' },
+              { model: CaixaEmbalagem, as: 'caixa' }
+            ]
+          }
+        ]
+      });
+
       if (!conferencia) {
         res.status(404).json({ erro: 'Conferência não encontrada.' });
+        return;
+      }
+      res.status(200).json(conferencia);
+    } catch (error: any) {
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async interromper(req: Request, res: Response): Promise<void> {
+    try {
+      const id = Number(req.params.id);
+      if (!id || isNaN(id)) {
+        res.status(400).json({ erro: 'ID de conferência inválido.' });
+        return;
+      }
+
+      const conferencia = await Conferencia.findByPk(id);
+      if (!conferencia) {
+        res.status(404).json({ erro: 'Conferência não encontrada.' });
+        return;
+      }
+
+      conferencia.status = 'interrompida';
+      await conferencia.save();
+
+      res.status(200).json({ mensagem: 'Conferência interrompida e salva com sucesso!' });
+    } catch (error: any) {
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async retomar(req: Request, res: Response): Promise<void> {
+    try {
+      const id = Number(req.params.id);
+      if (!id || isNaN(id)) {
+        res.status(400).json({ erro: 'ID de conferência inválido.' });
+        return;
+      }
+
+      const conferencia = await Conferencia.findByPk(id);
+      if (!conferencia) {
+        res.status(404).json({ erro: 'Conferência não encontrada.' });
+        return;
+      }
+
+      conferencia.status = 'em_andamento';
+      await conferencia.save();
+
+      res.status(200).json({ mensagem: 'Conferência retomada!', conferencia });
+    } catch (error: any) {
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async finalizar(req: Request, res: Response): Promise<void> {
+    try {
+      const id = Number(req.params.id);
+      if (!id || isNaN(id)) {
+        res.status(400).json({ erro: 'ID de conferência inválido.' });
+        return;
+      }
+
+      const usuarioLogado = (req as any).usuario || (req as any).user;
+      const conferencia = await Conferencia.findByPk(id, {
+        include: [{ model: Pacote, as: 'pacotes' }]
+      });
+
+      if (!conferencia) {
+        res.status(404).json({ erro: 'Conferência não encontrada.' });
+        return;
+      }
+
+      const pacotes = (conferencia as any).pacotes || [];
+      const pendentes = pacotes.filter((p: any) => p.status === 'pendente' || p.status === 'divergente_peso');
+
+      if (pendentes.length > 0 && usuarioLogado?.perfil !== 'admin') {
+        res.status(403).json({
+          erro: `Ainda existem ${pendentes.length} pacote(s) pendentes. Apenas um superior pode encerrar a conferência com pendências.`
+        });
         return;
       }
 
@@ -375,19 +541,281 @@ export class ConferenciaController {
       conferencia.data_finalizacao = new Date();
       await conferencia.save();
 
-      await LogAuditoria.create({
-        usuario_id: usuarioId ?? null,
-        acao: 'FINALIZACAO_CONFERENCIA',
-        detalhes: `Conferência ID ${conferenciaId} finalizada.`
+      res.status(200).json({ mensagem: 'Conferência finalizada com sucesso!', conferencia });
+    } catch (error: any) {
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async removerUltimaRemessa(req: Request, res: Response): Promise<void> {
+    const t = await sequelize.transaction();
+    try {
+      const id = Number(req.params.id);
+      if (!id || isNaN(id)) {
+        await t.rollback();
+        res.status(400).json({ erro: 'ID de conferência inválido.' });
+        return;
+      }
+
+      const ultimaRemessa = await Remessa.findOne({
+        where: { conferencia_id: id },
+        order: [['numero_remessa', 'DESC']],
+        transaction: t
+      });
+
+      if (!ultimaRemessa) {
+        await t.rollback();
+        res.status(404).json({ erro: 'Nenhuma remessa encontrada nesta conferência para remover.' });
+        return;
+      }
+
+      await Pacote.destroy({ where: { remessa_id: ultimaRemessa.id }, transaction: t });
+      await ultimaRemessa.destroy({ transaction: t });
+
+      await t.commit();
+      res.status(200).json({ mensagem: `Remessa nº ${ultimaRemessa.numero_remessa} e os respetivos pacotes foram removidos com sucesso.` });
+    } catch (error: any) {
+      await t.rollback();
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async excluirPacotes(req: Request, res: Response): Promise<void> {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        res.status(400).json({ erro: 'Lista de IDs dos pacotes é obrigatória.' });
+        return;
+      }
+
+      await Pacote.destroy({ where: { id: { [Op.in]: ids.map(Number) } } });
+      res.status(200).json({ mensagem: `${ids.length} pacote(s) excluído(s) com sucesso.` });
+    } catch (error: any) {
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async excluirConferencia(req: Request, res: Response): Promise<void> {
+    const t = await sequelize.transaction();
+    try {
+      const id = Number(req.params.id);
+      if (!id || isNaN(id)) {
+        await t.rollback();
+        res.status(400).json({ erro: 'ID de conferência inválido.' });
+        return;
+      }
+
+      const conferencia = await Conferencia.findByPk(id, { transaction: t });
+      if (!conferencia) {
+        await t.rollback();
+        res.status(404).json({ erro: 'Conferência não encontrada.' });
+        return;
+      }
+
+      const pacotes = await Pacote.findAll({ where: { conferencia_id: id }, transaction: t });
+      const pacoteIds = pacotes.map(p => p.id);
+      
+      if (pacoteIds.length > 0) {
+        await ItemPacote.destroy({ where: { pacote_id: { [Op.in]: pacoteIds } }, transaction: t });
+        await Pacote.destroy({ where: { conferencia_id: id }, transaction: t });
+      }
+      await Remessa.destroy({ where: { conferencia_id: id }, transaction: t });
+      await conferencia.destroy({ transaction: t });
+
+      await t.commit();
+      res.status(200).json({ mensagem: 'Conferência excluída com sucesso!' });
+    } catch (error: any) {
+      await t.rollback();
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async gerarMinuta(req: Request, res: Response): Promise<void> {
+    try {
+      const id = Number(req.params.id);
+
+      const conferencia = await Conferencia.findByPk(id, {
+        include: [
+          { model: Usuario, as: 'usuario' },
+          {
+            model: Pacote,
+            as: 'pacotes',
+            where: { status: { [Op.in]: ['ok', 'liberado_divergente'] } },
+            required: false,
+            include: [{ model: ItemPacote, as: 'itens' }]
+          }
+        ]
+      });
+
+      if (!conferencia) {
+        res.status(404).json({ erro: 'Conferência não encontrada.' });
+        return;
+      }
+
+      const pacotes = (conferencia as any).pacotes || [];
+      const conferenteNome = (conferencia as any).usuario?.nome || 'Operador Padrão';
+      const dataDoc = conferencia.data_finalizacao ? new Date(conferencia.data_finalizacao).toLocaleDateString('pt-BR') : new Date().toLocaleDateString('pt-BR');
+
+      const totalVolumes = pacotes.length;
+      const totalPesoGramas = pacotes.reduce((acc: number, p: any) => acc + Number(p.peso_lido_g || 0), 0);
+      const totalPesoKg = (totalPesoGramas / 1000).toFixed(2);
+
+      const doc = new PDFDocument({ margin: 40, size: 'A4' });
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="Minuta_${conferencia.transportadora}_${id}.pdf"`);
+      doc.pipe(res);
+
+      doc.fontSize(16).font('Helvetica-Bold').text('EUROART - MINUTA DE TRANSPORTE', { align: 'center' });
+      doc.moveDown(1);
+      
+      doc.fontSize(10).font('Helvetica');
+      doc.text(`ID Conferência: #${conferencia.id}`);
+      doc.text(`Transportadora: ${conferencia.transportadora.toUpperCase()}`);
+      doc.text(`Data de Fecho: ${dataDoc}`);
+      doc.text(`Conferente Responsável: ${conferenteNome}`);
+      doc.moveDown(2);
+
+      let y = doc.y;
+      
+      doc.font('Helvetica-Bold').fontSize(9);
+      doc.text('NF', 40, y);
+      doc.text('CLIENTE', 95, y);
+      doc.text('PRODUTOS (QTD)', 210, y);
+      doc.text('STATUS', 330, y);
+      doc.text('PESO (g)', 410, y);
+      doc.text('DATA/HORA', 470, y);
+      
+      doc.moveTo(40, y + 12).lineTo(550, y + 12).stroke();
+      y += 20;
+
+      doc.font('Helvetica').fontSize(9);
+      for (const p of pacotes) {
+        const itensLista = p.itens || [];
+        const alturaLinha = Math.max(1, itensLista.length) * 12 + 8;
+
+        if (y + alturaLinha > 750) { doc.addPage(); y = 40; }
+
+        const dataConf = p.data_conferido ? new Date(p.data_conferido).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '-';
+        const statusTexto = p.status === 'ok' ? 'OK' : 'LIB. DIVERG.';
+        const clienteResumo = p.razao_social.length > 20 ? p.razao_social.substring(0, 18) + '...' : p.razao_social;
+
+        doc.text(p.numero_nf, 40, y);
+        doc.text(clienteResumo, 95, y);
+        doc.text(statusTexto, 330, y);
+        doc.text(p.peso_lido_g.toString(), 410, y);
+        doc.text(dataConf, 470, y);
+        
+        let currentY = y;
+        if (itensLista.length === 0) {
+          doc.text('-', 210, currentY);
+        } else {
+          for (const item of itensLista) {
+            doc.text(`${item.codigo_sku} (${item.quantidade}x)`, 210, currentY);
+            currentY += 12;
+          }
+        }
+        
+        y += alturaLinha;
+      }
+
+      doc.moveDown(2);
+      y = doc.y;
+      if (y > 650) { doc.addPage(); y = 40; }
+
+      doc.font('Helvetica-Bold').fontSize(11);
+      doc.text(`RESUMO DA CARGA`, 40, y);
+      doc.font('Helvetica').fontSize(10);
+      doc.text(`Volumes Totais: ${totalVolumes} caixas`, 40, y + 15);
+      doc.text(`Peso Total da Carga: ${totalPesoKg} Kg`, 40, y + 30);
+
+      doc.moveTo(80, y + 100).lineTo(250, y + 100).stroke();
+      doc.text('Assinatura do Motorista', 105, y + 105);
+
+      doc.moveTo(330, y + 100).lineTo(500, y + 100).stroke();
+      doc.text('Assinatura do Conferente', 355, y + 105);
+
+      doc.end();
+    } catch (error: any) {
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  // ==========================================================
+  // DASHBOARD E HISTÓRICO GERAL (CORRIGIDO)
+  // ==========================================================
+  static async obterDashboard(req: Request, res: Response): Promise<void> {
+    try {
+      const totalPacotes = await Pacote.count();
+      const pacotesOk = await Pacote.count({ where: { status: { [Op.in]: ['ok', 'liberado_divergente'] } } });
+      const pacotesErro = await Pacote.count({ where: { status: { [Op.in]: ['divergente_peso', 'bloqueado'] } } });
+      const totalCaixas = await Pacote.count({ where: { caixa_id: { [Op.not]: null } } });
+
+      const statusCount = await Pacote.findAll({
+        attributes: ['status', [sequelize.fn('COUNT', sequelize.col('id')), 'total']],
+        group: ['status']
+      });
+
+      // Cruzamento manual para evitar erros de alias (as: 'conferencia')
+      const todosPacotes = await Pacote.findAll({ attributes: ['id', 'conferencia_id'] });
+      const todasConferencias = await Conferencia.findAll({ attributes: ['id', 'transportadora'] });
+      
+      const mapaConferencias = new Map(todasConferencias.map((c: any) => [c.id, c.transportadora]));
+      const contagemTransp = new Map();
+
+      todosPacotes.forEach((p: any) => {
+        const transp = mapaConferencias.get(p.conferencia_id) || 'Desconhecida';
+        contagemTransp.set(transp, (contagemTransp.get(transp) || 0) + 1);
+      });
+
+      const transportadorasCount = Array.from(contagemTransp, ([transportadora, total]) => ({ transportadora, total }));
+
+      const topProdutos = await ItemPacote.findAll({
+        attributes: ['codigo_sku', 'descricao_produto', [sequelize.fn('SUM', sequelize.col('quantidade')), 'total_vendido']],
+        group: ['codigo_sku', 'descricao_produto'],
+        order: [[sequelize.literal('total_vendido'), 'DESC']],
+        limit: 5
       });
 
       res.status(200).json({
-        sucesso: true,
-        mensagem: 'Conferência finalizada com sucesso!',
-        conferencia
+        kpis: { totalPacotes, pacotesOk, pacotesErro, totalCaixas },
+        graficoStatus: statusCount,
+        graficoTransportadoras: transportadorasCount,
+        topProdutos
       });
     } catch (error: any) {
-      res.status(500).json({ erro: error.message || 'Erro ao finalizar conferência.' });
+      console.error("Erro no Dashboard:", error);
+      res.status(500).json({ erro: error.message });
+    }
+  }
+
+  static async listarHistoricoGeral(req: Request, res: Response): Promise<void> {
+    try {
+      // Ordenação pelo ID evita falhas caso a coluna updatedAt não exista
+      const pacotes = await Pacote.findAll({
+        order: [['id', 'DESC']],
+        limit: 200
+      });
+
+      // Join manual para garantir que a transportadora é anexada sem falhas de Sequelize
+      const conferencias = await Conferencia.findAll({ attributes: ['id', 'transportadora', 'status'] });
+      const confMap = new Map(conferencias.map((c: any) => [c.id, c]));
+
+      const resultado = pacotes.map((p: any) => {
+        const pct = p.toJSON ? p.toJSON() : p;
+        const conf = confMap.get(pct.conferencia_id);
+        if (conf) {
+          pct.conferencia = { transportadora: conf.transportadora, status: conf.status };
+        }
+        return pct;
+      });
+
+      res.status(200).json(resultado);
+    } catch (error: any) {
+      console.error("Erro no Histórico Geral:", error);
+      res.status(500).json({ erro: error.message });
     }
   }
 }
+
+export default ConferenciaController;

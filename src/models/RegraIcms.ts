@@ -13,22 +13,10 @@ export class RegraIcms extends Model<RegraIcmsAttributes> implements RegraIcmsAt
 
 RegraIcms.init(
   {
-    uf: {
-      type: DataTypes.CHAR(2),
-      primaryKey: true,
-      allowNull: false,
-    },
-    exige_guia: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: true,
-    },
+    uf: { type: DataTypes.CHAR(2), primaryKey: true, allowNull: false },
+    exige_guia: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true }
   },
-  {
-    sequelize,
-    tableName: 'regras_icms',
-    timestamps: false,
-  }
+  { sequelize, tableName: 'regras_icms', timestamps: false }
 );
 
 export default RegraIcms;

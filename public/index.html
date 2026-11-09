@@ -3,50 +3,101 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Painel de Conferência - Euroart</title>
+    <title>Dashboard - Euroart</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="auth.js"></script>
     <style>
-        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        body { margin: 0; padding: 20px; background-color: #f4f6f8; }
-        .header { display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 15px 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); margin-bottom: 20px; }
-        .user-info { display: flex; align-items: center; gap: 15px; }
-        .badge { background: #2196f3; color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 0.8em; text-transform: uppercase; font-weight: bold; }
-        .btn-logout { background: #e53935; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-        .btn-logout:hover { background: #c62828; }
-        .card { background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); text-align: center; }
+        .kpi-container { display: flex; gap: 15px; margin-bottom: 20px; flex-wrap: wrap; }
+        .kpi-card { flex: 1; min-width: 200px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .kpi-card h3 { color: #64748b; font-size: 0.9em; text-transform: uppercase; margin-bottom: 10px; }
+        .kpi-card .value { font-size: 2em; font-weight: bold; color: #0f172a; }
+        .kpi-card .value.success { color: #10b981; }
+        .kpi-card .value.danger { color: #ef4444; }
+        .charts-container { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 20px; }
+        .chart-box { flex: 1; min-width: 400px; background: #fff; padding: 20px; border-radius: 8px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        
+        /* O SEGREDO PARA O GRÁFICO NÃO CRESCER INFINITAMENTE ESTÁ AQUI: */
+        .canvas-wrapper { position: relative; height: 300px; width: 100%; }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h2>📦 Euroart — Sistema de Expedição e Conferência Final</h2>
-        <div class="user-info">
-            <span id="user-display">Carregando...</span>
-            <span id="role-display" class="badge"></span>
-            <button class="btn-logout" onclick="logout()">Sair</button>
-        </div>
+    <div class="app-layout">
+        <main class="main-content">
+            <div class="container">
+                <div class="header-with-logo">
+                    <h1><i class="fas fa-chart-line"></i> Dashboard de Expedição</h1>
+                </div>
+
+                <div class="kpi-container">
+                    <div class="kpi-card">
+                        <h3>Total de Volumes</h3>
+                        <div class="value" id="kpiTotal">0</div>
+                    </div>
+                    <div class="kpi-card">
+                        <h3>Pacotes Aprovados</h3>
+                        <div class="value success" id="kpiOk">0</div>
+                    </div>
+                    <div class="kpi-card">
+                        <h3>Erros / Bloqueios</h3>
+                        <div class="value danger" id="kpiErro">0</div>
+                    </div>
+                    <div class="kpi-card">
+                        <h3>Caixas Utilizadas</h3>
+                        <div class="value" style="color: #3b82f6;" id="kpiCaixas">0</div>
+                    </div>
+                </div>
+
+                <div class="charts-container">
+                    <div class="chart-box">
+                        <h3 style="text-align: center; margin-bottom: 15px; color: #475569;">Desempenho por Status</h3>
+                        <!-- DIV DE CONTENÇÃO ADICIONADA -->
+                        <div class="canvas-wrapper">
+                            <canvas id="chartStatus"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-box">
+                        <h3 style="text-align: center; margin-bottom: 15px; color: #475569;">Volumes por Transportadora</h3>
+                        <!-- DIV DE CONTENÇÃO ADICIONADA -->
+                        <div class="canvas-wrapper">
+                            <canvas id="chartTransportadoras"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="chart-box" style="margin-bottom: 20px;">
+                    <h3 style="margin-bottom: 15px; color: #475569;">Top 5 SKUs Mais Expedidos</h3>
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid #e2e8f0; text-align: left;">
+                                <th style="padding: 10px;">SKU</th>
+                                <th style="padding: 10px;">Descrição</th>
+                                <th style="padding: 10px; text-align: center;">Qtd Vendida</th>
+                            </tr>
+                        </thead>
+                        <tbody id="listaTopProdutos">
+                            <tr><td colspan="3" style="text-align: center; padding: 20px;">A carregar dados...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+            
+            <footer>
+                <div id="versiculo-do-dia"></div>
+                <p>&copy; 2026 - PI Euroart - Fatec Indaiatuba</p>
+            </footer>
+        </main>
     </div>
 
-    <div class="card">
-        <h3>✅ Autenticação realizada com sucesso!</h3>
-        <p>Você está logado no sistema de conferência.</p>
-    </div>
-
+    <script src="utils.js"></script>
+    <script src="menu.js"></script>
     <script>
-        const token = localStorage.getItem('token');
-        const usuarioJson = localStorage.getItem('usuario');
-
-        if (!token || !usuarioJson) {
-            window.location.href = 'login.html';
-        } else {
-            const usuario = JSON.parse(usuarioJson);
-            document.getElementById('user-display').textContent = `Olá, ${usuario.nome} (${usuario.email})`;
-            document.getElementById('role-display').textContent = usuario.perfil;
-        }
-
-        function logout() {
-            localStorage.removeItem('token');
-            localStorage.removeItem('usuario');
-            window.location.href = 'login.html';
+        if (typeof carregarMenu === 'function') {
+            carregarMenu('menu-dashboard');
         }
     </script>
+    <script src="dashboard.js"></script>
 </body>
 </html>

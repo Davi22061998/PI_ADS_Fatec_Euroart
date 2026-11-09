@@ -1,13 +1,500 @@
+/* public/style.css - Estilo Global, Sidebar e Dashboard Euroart */
+
 :root {
-    --cor-principal: #2e7d32;
-    --cor-tabela-header: #eceff1;
-    --cor-borda-padrao: #cfd8dc;
-    --radius-caixas: 12px;
-    --radius-input: 6px;
-    --radius-botoes: 6px;
+    --cor-principal: #1e3a8a;
+    --cor-primaria-hover: #1e40af;
+    --cor-fundo: #f8fafc;
+    --cor-texto: #0f172a;
+    --cor-borda: #e2e8f0;
 }
 
 * {
+    margin: 0;
+    padding: 0;
     box-sizing: border-box;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+body {
+    background-color: var(--cor-fundo);
+    color: var(--cor-texto);
+    min-height: 100vh;
+}
+
+/* Layout Global Flexível (Garante Footer Fixo no Fundo) */
+.app-layout {
+    display: flex;
+    min-height: 100vh;
+}
+
+.main-content {
+    flex: 1;
+    padding: 24px;
+    background-color: #f8fafc;
+    display: flex;
+    flex-direction: column;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    background: #ffffff;
+    padding: 28px;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+    border: 1px solid var(--cor-borda);
+    flex: 1; /* Permite que o container ocupe o espaço antes do rodapé */
+    width: 100%;
+}
+
+/* ==========================================================================
+   SIDEBAR GERADA PELO menu.js
+   ========================================================================== */
+aside.sidebar {
+    width: 260px;
+    min-width: 260px;
+    background: #ffffff;
+    border-right: 1px solid var(--cor-borda);
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.02);
+}
+
+.sidebar-header {
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.sidebar-logo {
+    max-width: 170px;
+    height: auto;
+    display: inline-block;
+}
+
+.user-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 14px;
+    background: #f8fafc;
+    border: 1px solid var(--cor-borda);
+    border-radius: 8px;
+    margin-bottom: 24px;
+    font-size: 0.92rem;
+    font-weight: 600;
+}
+
+.user-cargo {
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* Itens da Lista Lateral */
+.sidebar-menu {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex: 1;
+}
+
+.sidebar-menu li {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 14px;
+    border-radius: 8px;
+    color: #475569;
+    font-size: 0.92rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.18s ease;
+}
+
+.sidebar-menu li i {
+    font-size: 1.1rem;
+    width: 22px;
+    text-align: center;
+    color: #94a3b8;
+    transition: color 0.18s ease;
+}
+
+.sidebar-menu li:hover {
+    background-color: #f1f5f9;
+    color: #0f172a;
+}
+
+.sidebar-menu li:hover i {
+    color: var(--cor-principal);
+}
+
+/* Item Ativo */
+.sidebar-menu li.active {
+    background-color: #eff6ff !important;
+    color: #2563eb !important;
+    font-weight: 600 !important;
+    border-left: 4px solid #2563eb;
+}
+
+.sidebar-menu li.active i {
+    color: #2563eb !important;
+}
+
+/* Botão Sair */
+.logout-btn {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 11px;
+    background: #fee2e2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.logout-btn:hover {
+    background: #fecaca;
+}
+
+/* ==========================================================================
+   CONTEÚDO E ESTRUTURA GERAL
+   ========================================================================== */
+.header-with-logo {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+.header-with-logo .logo {
+    height: 44px;
+    object-fit: contain;
+}
+
+.header-with-logo h1 {
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+/* Mensagens de Feedback */
+.feedback-message {
+    display: none;
+    padding: 12px 18px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+
+.feedback-message.show { display: block; }
+.feedback-message.success { background-color: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.feedback-message.error { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+.feedback-message.warning { background-color: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+.feedback-message.info { background-color: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; }
+
+/* Entrada de Bipagem */
+.input-section {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.button-label {
+    background-color: #2563eb;
+    color: #ffffff;
+    padding: 12px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.95rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    transition: background-color 0.2s;
+}
+
+.button-label:hover { background-color: #1d4ed8; }
+
+#codigoInput {
+    flex: 1;
+    padding: 12px 16px;
+    font-size: 1.15rem;
+    font-weight: 600;
+    border: 2px solid #cbd5e1;
+    border-radius: 6px;
+    outline: none;
+    background-color: #f8fafc;
+    transition: all 0.2s;
+}
+
+#codigoInput:focus {
+    border-color: #2563eb;
+    background-color: #ffffff;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.blink-ok { background-color: #86efac !important; border-color: #22c55e !important; }
+.blink-error { background-color: #fca5a5 !important; border-color: #ef4444 !important; }
+.blink-duplicate { background-color: #fde047 !important; border-color: #eab308 !important; }
+.blink-guide-required { background-color: #93c5fd !important; border-color: #3b82f6 !important; }
+
+/* Seletor de Conferência */
+.conferencia-select {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.conferencia-select label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #475569;
+}
+
+#selectConferencia {
+    flex: 1;
+    min-width: 280px;
+    padding: 9px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 0.92rem;
+    outline: none;
+}
+
+#transportadoraAtual {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #1e293b;
+    margin-bottom: 12px;
+}
+
+/* Card de Progresso Compacto */
+.summary {
+    background: #ffffff;
+    border: 1px solid var(--cor-borda);
+    border-radius: 8px;
+    padding: 14px 20px;
+    margin: 12px 0 20px 0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 0.92rem;
+    color: #334155;
+}
+
+.progress-title strong { color: #0f172a; font-size: 1.05rem; }
+.progress-percent { font-weight: 700; color: #2563eb; font-size: 1rem; }
+
+.progress-bar-bg {
+    width: 100%;
+    height: 8px;
+    background-color: #e2e8f0;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #10b981);
+    transition: width 0.3s ease-in-out;
+}
+
+/* Botões de Ação */
+.controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+}
+
+button {
+    cursor: pointer;
+    border: none;
+    outline: none;
+    transition: opacity 0.2s, transform 0.1s;
+}
+
+button:active { transform: scale(0.98); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-interromper { background-color: #d97706; color: #fff; padding: 9px 15px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; }
+.btn-finalizar { background-color: #16a34a; color: #fff; padding: 9px 15px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; }
+.btn-reset { background-color: #ef4444; color: #fff; padding: 9px 15px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; }
+.btn-excluir { background-color: #dc2626; color: #fff; padding: 9px 15px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; }
+.btn-historico, .btn-minutas, .btn-retomar { background-color: #2563eb; color: #fff; padding: 9px 15px; border-radius: 6px; font-weight: 600; font-size: 0.88rem; }
+
+/* Filtros */
+.filter-section {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+#filtroNf {
+    flex: 1;
+    padding: 9px 14px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    outline: none;
+}
+
+#filtroNf:focus { border-color: #2563eb; }
+
+.btn-pendentes {
+    background-color: #e2e8f0;
+    color: #475569;
+    padding: 9px 16px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 0.88rem;
+}
+
+.btn-pendentes.active { background-color: #0f172a; color: #ffffff; }
+
+/* Tabela de Pacotes */
+.table-container {
+    background: #ffffff;
+    border: 1px solid var(--cor-borda);
+    border-radius: 8px;
+    overflow-x: auto;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    margin-bottom: 24px;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    text-align: left;
+    white-space: nowrap;
+}
+
+thead th {
+    background-color: #f8fafc;
+    color: #475569;
+    font-weight: 600;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 10px 14px;
+    border-bottom: 1px solid #cbd5e1;
+}
+
+tbody tr {
+    border-bottom: 1px solid #f1f5f9;
+    transition: background-color 0.15s ease;
+}
+
+tbody tr:hover { background-color: #f8fafc !important; }
+
+tbody td {
+    padding: 10px 14px;
+    vertical-align: middle;
+    color: #1e293b;
+}
+
+.col-center { text-align: center; }
+.col-num { text-align: right; font-variant-numeric: tabular-nums; }
+.col-nf { font-size: 0.95rem; color: #0f172a; }
+
+.col-chave { cursor: pointer; }
+.col-chave code {
+    background: #f1f5f9;
+    color: #475569;
+    padding: 3px 6px;
+    border-radius: 4px;
+    font-family: 'Consolas', 'Menlo', monospace;
+    font-size: 0.8rem;
+    border: 1px solid #e2e8f0;
+}
+
+.col-chave code:hover { background: #e2e8f0; color: #0f172a; }
+
+.col-cliente, .col-produto {
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.85rem;
+}
+
+/* Badges de Status */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.badge-ok { background-color: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.badge-pending { background-color: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+.badge-danger { background-color: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+.badge-locked { background-color: #450a0a; color: #fecaca; }
+.badge-warning { background-color: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+.badge-duplicate { background-color: #fff7ed; color: #c2410c; border: 1px solid #ffedd5; }
+.badge-guia { background-color: #dbeafe; color: #1d4ed8; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
+.badge-remessa { background-color: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 0.75rem; }
+
+tr.row-ok { background-color: #f0fdf4; }
+tr.row-warning { background-color: #fffbeb; }
+tr.row-danger { background-color: #fef2f2; }
+tr.row-locked { background-color: #faf5ff; }
+
+.text-muted { color: #94a3b8; }
+.text-center { text-align: center; }
+.py-4 { padding-top: 1.5rem; padding-bottom: 1.5rem; }
+
+.history-summary {
+    background-color: #f8fafc;
+    border: 1px solid var(--cor-borda);
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin-top: 10px;
+}
+
+.history-summary ul { list-style: none; }
+.history-summary li { font-size: 0.85rem; color: #475569; padding: 4px 0; }
+
+/* Rodapé Base */
+footer {
+    text-align: center;
+    padding: 20px;
+    color: #64748b;
+    font-size: 0.85rem;
+    margin-top: 25px;
+    width: 100%;
+}
+
+footer p {
+    margin-bottom: 5px;
 }
